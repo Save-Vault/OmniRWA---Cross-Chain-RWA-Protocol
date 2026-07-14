@@ -1,0 +1,20 @@
+{
+  "name": "omni-rwa-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for OmniRWA protocol",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js",
+    "deploy:chain-a": "hardhat run scripts/deploy-chain-a.js --network localhost",
+    "deploy:chain-b": "hardhat run scripts/deploy-chain-b.js --network localhost"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0",
+    "dotenv": "^16.3.1"
+  }
+}

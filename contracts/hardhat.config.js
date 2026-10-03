@@ -1,10 +1,21 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("dotenv").config();
 
+// Override the source-path task to exclude node_modules/.
+// The project keeps .sol files at the root of the contracts/ folder, which
+// Hardhat would otherwise scan together with node_modules.
+const { subtask } = require("hardhat/config");
+const { TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS } = require("hardhat/builtin-tasks/task-names");
+
+subtask(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS).setAction(async (_, hre, runSuper) => {
+  const paths = await runSuper();
+  return paths.filter((p) => !p.includes("node_modules"));
+});
+
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
-    version: "0.8.19",
+    version: "0.8.20",
     settings: {
       optimizer: {
         enabled: true,

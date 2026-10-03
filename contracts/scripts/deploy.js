@@ -17,9 +17,10 @@ async function main() {
 
   // Deploy ComplianceModule
   console.log("\n2. Deploying ComplianceModule...");
-  const maxTransferAmount = hre.ethers.utils.parseEther("10000"); // 10,000 tokens max
+  const maxTransferAmount  = hre.ethers.utils.parseEther("10000"); // 10,000 tokens max per tx
+  const dailyTransferLimit = hre.ethers.utils.parseEther("50000"); // 50,000 tokens max per day
   const ComplianceModule = await hre.ethers.getContractFactory("ComplianceModule");
-  const complianceModule = await ComplianceModule.deploy(maxTransferAmount);
+  const complianceModule = await ComplianceModule.deploy(maxTransferAmount, dailyTransferLimit);
   await complianceModule.deployed();
   console.log("ComplianceModule deployed to:", complianceModule.address);
 
@@ -60,6 +61,25 @@ async function main() {
   await identityRegistry.registerUser(deployer.address, true);
   console.log("Deployer registered as verified user");
 
+  // Deploy OmniRWAFutures
+  console.log("\n9. Deploying OmniRWAFutures...");
+  const futuresFeeBps    = 100;                              // 1 % fee
+  const initialOraclePrice = hre.ethers.utils.parseEther("1"); // 1 USD per ORWA (18 dp)
+  const OmniRWAFutures = await hre.ethers.getContractFactory("OmniRWAFutures");
+  const futures = await OmniRWAFutures.deploy(
+    token.address,
+    identityRegistry.address,
+    futuresFeeBps,
+    initialOraclePrice
+  );
+  await futures.deployed();
+  console.log("OmniRWAFutures deployed to:", futures.address);
+
+  // Allow the futures contract to receive ORWA (token approvals are per-user,
+  // but we need the contract to hold collateral via transferFrom, which works
+  // as long as users approve the contract).  No extra token setup needed.
+  console.log("OmniRWAFutures setup complete");
+
   // Deployment summary
   console.log("\n=== Deployment Summary ===");
   console.log("Network:", hre.network.name);
@@ -68,6 +88,7 @@ async function main() {
   console.log("ComplianceModule:", complianceModule.address);
   console.log("OmniRWAToken:", token.address);
   console.log("OmniRWARouter:", router.address);
+  console.log("OmniRWAFutures:", futures.address);
   console.log("Deployer:", deployer.address);
 
   // Save deployment addresses to file
@@ -78,6 +99,7 @@ async function main() {
     complianceModule: complianceModule.address,
     token: token.address,
     router: router.address,
+    futures: futures.address,
     deployer: deployer.address,
     deploymentTime: new Date().toISOString()
   };

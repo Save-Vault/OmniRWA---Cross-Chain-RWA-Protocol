@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./OmniRWAToken.sol";
@@ -46,7 +46,7 @@ contract OmniRWARouter is Ownable {
      * @param _chainId The chain ID for this network
      * @param _token The address of the OmniRWA token
      */
-    constructor(uint32 _chainId, address _token) {
+    constructor(uint32 _chainId, address _token) Ownable(msg.sender) {
         chainId = _chainId;
         token = OmniRWAToken(_token);
     }

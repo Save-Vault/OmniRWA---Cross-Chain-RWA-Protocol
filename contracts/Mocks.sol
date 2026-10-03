@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 /**
  * @title IdentityRegistry
@@ -22,9 +22,9 @@ contract IdentityRegistry {
     }
 
     /**
-     * @dev Register or update a user's verification status
-     * @param user The wallet address to register
-     * @param status The verification status (true = verified, false = unverified)
+     * @notice Register or update a user's KYC verification status.
+     * @param user    Wallet address
+     * @param status  true = verified, false = revoked
      */
     function registerUser(address user, bool status) external onlyAdmin {
         verifiedUsers[user] = status;
@@ -32,17 +32,14 @@ contract IdentityRegistry {
     }
 
     /**
-     * @dev Check if a user is verified
-     * @param user The wallet address to check
-     * @return bool True if the user is verified
+     * @notice Check if a user holds valid KYC.
      */
     function isVerified(address user) external view returns (bool) {
         return verifiedUsers[user];
     }
 
     /**
-     * @dev Update the admin address
-     * @param newAdmin The new admin address
+     * @notice Transfer admin role.
      */
     function setAdmin(address newAdmin) external onlyAdmin {
         address oldAdmin = admin;
@@ -53,64 +50,128 @@ contract IdentityRegistry {
 
 /**
  * @title ComplianceModule
- * @dev Mock compliance module for transfer restrictions (simulating ERC-3643 / T-REX standard)
+ * @dev Mock compliance module for transfer restrictions (simulating ERC-3643 / T-REX standard).
+ *      Checks:
+ *        1. KYC verification for sender and receiver
+ *        2. Per-transaction maximum amount
+ *        3. Daily rolling transfer limit per wallet (24-hour window)
  */
 contract ComplianceModule {
-    uint256 public maxTransferAmount;
     IdentityRegistry public identityRegistry;
 
-    event MaxTransferAmountUpdated(uint256 oldAmount, uint256 newAmount);
-    event IdentityRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+    /// @notice Maximum amount per single transaction (token units with 18 decimals)
+    uint256 public maxTransferAmount;
 
-    constructor(uint256 _maxTransferAmount) {
-        maxTransferAmount = _maxTransferAmount;
+    /// @notice Maximum total amount a wallet may transfer within a 24-hour window
+    uint256 public dailyTransferLimit;
+
+    // ── Daily transfer tracking ────────────────────────────────────────────────
+    struct DailyUsage {
+        uint256 windowStart; // unix timestamp of the start of the current day window
+        uint256 transferred;  // total transferred in the current window
     }
 
+    mapping(address => DailyUsage) private _dailyUsage;
+
+    uint256 private constant ONE_DAY = 24 * 60 * 60; // 86400 seconds
+
+    // ── Events ─────────────────────────────────────────────────────────────────
+    event MaxTransferAmountUpdated(uint256 oldAmount, uint256 newAmount);
+    event DailyTransferLimitUpdated(uint256 oldLimit, uint256 newLimit);
+    event IdentityRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+
     /**
-     * @dev Set the identity registry contract
-     * @param _identityRegistry The address of the identity registry
+     * @param _maxTransferAmount  Per-transaction cap (e.g. 10_000 * 10**18)
+     * @param _dailyTransferLimit Daily rolling cap (e.g. 50_000 * 10**18). 0 = disabled.
      */
+    constructor(uint256 _maxTransferAmount, uint256 _dailyTransferLimit) {
+        maxTransferAmount = _maxTransferAmount;
+        dailyTransferLimit = _dailyTransferLimit;
+    }
+
+    // ── Admin setters ──────────────────────────────────────────────────────────
     function setIdentityRegistry(address _identityRegistry) external {
         address oldRegistry = address(identityRegistry);
         identityRegistry = IdentityRegistry(_identityRegistry);
         emit IdentityRegistryUpdated(oldRegistry, _identityRegistry);
     }
 
-    /**
-     * @dev Update the maximum transfer amount per transaction
-     * @param _maxTransferAmount The new maximum transfer amount
-     */
     function setMaxTransferAmount(uint256 _maxTransferAmount) external {
         uint256 oldAmount = maxTransferAmount;
         maxTransferAmount = _maxTransferAmount;
         emit MaxTransferAmountUpdated(oldAmount, _maxTransferAmount);
     }
 
+    function setDailyTransferLimit(uint256 _dailyTransferLimit) external {
+        uint256 oldLimit = dailyTransferLimit;
+        dailyTransferLimit = _dailyTransferLimit;
+        emit DailyTransferLimitUpdated(oldLimit, _dailyTransferLimit);
+    }
+
+    // ── Public view helpers ────────────────────────────────────────────────────
     /**
-     * @dev Check if a transfer is compliant
-     * @param from The sender address
-     * @param to The recipient address
-     * @param amount The transfer amount
-     * @return bool True if the transfer is compliant
+     * @notice How much a wallet has transferred in the current 24-hour window.
+     */
+    function getDailyTransferred(address wallet) external view returns (uint256) {
+        DailyUsage storage usage = _dailyUsage[wallet];
+        if (block.timestamp >= usage.windowStart + ONE_DAY) {
+            return 0; // window has expired
+        }
+        return usage.transferred;
+    }
+
+    /**
+     * @notice Remaining allowance for a wallet in the current 24-hour window.
+     *         Returns type(uint256).max when daily limit is disabled (0).
+     */
+    function getDailyRemaining(address wallet) external view returns (uint256) {
+        if (dailyTransferLimit == 0) {
+            return type(uint256).max;
+        }
+        DailyUsage storage usage = _dailyUsage[wallet];
+        uint256 used = 0;
+        if (block.timestamp < usage.windowStart + ONE_DAY) {
+            used = usage.transferred;
+        }
+        if (used >= dailyTransferLimit) return 0;
+        return dailyTransferLimit - used;
+    }
+
+    // ── Compliance check (called by OmniRWAToken) ──────────────────────────────
+    /**
+     * @notice Check whether a transfer passes all compliance rules.
+     *         NOTE: This function has side-effects — it updates the daily usage
+     *         counter for `from`. It must only be called when a real transfer
+     *         is being executed (i.e. inside _checkCompliance).
      */
     function isTransferCompliant(
         address from,
         address to,
         uint256 amount
-    ) external view returns (bool) {
-        // Check if sender is verified
-        if (!identityRegistry.isVerified(from)) {
-            return false;
+    ) external returns (bool) {
+        // 1. KYC checks
+        if (address(identityRegistry) != address(0)) {
+            if (!identityRegistry.isVerified(from)) return false;
+            if (!identityRegistry.isVerified(to))   return false;
         }
 
-        // Check if recipient is verified
-        if (!identityRegistry.isVerified(to)) {
-            return false;
-        }
+        // 2. Per-transaction cap
+        if (maxTransferAmount > 0 && amount > maxTransferAmount) return false;
 
-        // Check if amount exceeds maximum transfer limit
-        if (amount > maxTransferAmount) {
-            return false;
+        // 3. Daily rolling limit
+        if (dailyTransferLimit > 0) {
+            DailyUsage storage usage = _dailyUsage[from];
+
+            // Reset window if expired
+            if (block.timestamp >= usage.windowStart + ONE_DAY) {
+                usage.windowStart = block.timestamp;
+                usage.transferred = 0;
+            }
+
+            if (usage.transferred + amount > dailyTransferLimit) return false;
+
+            // Record the transfer
+            usage.transferred += amount;
         }
 
         return true;

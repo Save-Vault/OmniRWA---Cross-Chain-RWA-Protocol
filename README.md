@@ -35,10 +35,11 @@ OmniRWA consists of three main layers:
 ```
 omni-rwa/
 ├── contracts/              # Smart contracts
-│   ├── OmniRWAToken.sol   # ERC-20 token with compliance
-│   ├── OmniRWARouter.sol  # Cross-chain router
-│   ├── Mocks.sol          # Identity registry & compliance mocks
-│   ├── hardhat.config.js  # Hardhat configuration
+│   ├── OmniRWAToken.sol        # ERC-20 token with compliance
+│   ├── OmniRWARouter.sol       # Cross-chain router
+│   ├── OmniRWAFutures.sol      # Fixed-term forward contracts on ORWA
+│   ├── Mocks.sol               # Identity registry & compliance mocks
+│   ├── hardhat.config.js       # Hardhat configuration
 │   ├── scripts/
 │   │   ├── deploy.js              # Single chain deployment
 │   │   ├── deploy-chain-a.js      # Chain A deployment
@@ -52,7 +53,7 @@ omni-rwa/
 ├── frontend/              # Frontend dashboard
 │   ├── app/
 │   │   ├── layout.tsx    # Root layout
-│   │   ├── page.tsx      # Main dashboard page
+│   │   ├── page.tsx      # Main dashboard page (Bridge + Futures tabs)
 │   │   └── globals.css   # Global styles
 │   ├── tailwind.config.ts
 │   ├── tsconfig.json
@@ -230,6 +231,37 @@ The process will:
 - The "Activity Feed" shows real-time progress of your bridge transfers
 - Each step is tracked with status indicators
 
+### 6. Trade Futures
+
+Switch to the **Futures** tab on the dashboard to access the forward contract trading interface.
+
+#### Open a Position
+1. Select **LONG** (betting price rises) or **SHORT** (betting price falls)
+2. Enter the **collateral amount** in ORWA
+3. Set a **strike price** in USD
+4. Choose an **expiry date/time**
+5. Click **Approve + Create Order** — MetaMask will prompt for two transactions: an ERC-20 approval and the `createOrder` call
+
+#### Fill an Order
+- Open orders created by other wallets appear in the **Order Book**
+- Click **Fill** to lock matching collateral and become the counterparty
+
+#### Settle a Position
+- After expiry, any party can click **Settle**
+- The contract compares the current oracle price against the strike price
+- The winning side receives 2× collateral minus a 1% protocol fee
+
+#### Cancel an Order
+- Click **Cancel** on your own open orders to recover your collateral
+- Expired filled orders that have not been settled can also be cancelled
+
+#### Futures Stats Bar
+The stats bar at the top of the Futures tab shows:
+- Current oracle price
+- Order counts (open / filled / settled / cancelled)
+- Protocol fee rate (1%)
+- Total fees collected to date
+
 ## Smart Contract Details
 
 ### OmniRWAToken
@@ -249,6 +281,17 @@ Cross-chain message router:
 - **Handle Incoming Route**: Mints tokens after compliance verification
 - **Relayer Authorization**: Only trusted relayers can handle incoming routes
 - **Replay Protection**: Message IDs prevent duplicate processing
+
+### OmniRWAFutures
+
+Fixed-term forward contracts that allow KYC-verified wallets to take LONG or SHORT positions on the ORWA token price:
+
+- **Two sides**: LONG (bullish) and SHORT (bearish)
+- **Equal collateral**: Both creator and counterparty lock the same amount of ORWA
+- **Settlement**: At expiry, oracle price vs. strike price determines the winner, who receives 2× collateral minus a 1% protocol fee
+- **Oracle**: Owner-controlled price feed (simulates Chainlink in development)
+- **Full lifecycle**: `createOrder` → `fillOrder` → `settle`, with `cancelOrder` available for open orders or expired-but-unsettled positions
+- **KYC enforced**: Only wallets registered in the IdentityRegistry can create or fill orders
 
 ### Mocks
 
@@ -290,6 +333,38 @@ GET /api/assets/status?walletAddress=0x...
 #### Contract Addresses
 ```
 GET /api/contracts
+```
+
+#### Futures — List Orders
+```
+GET /api/futures?status=open&wallet=0x...&chain=chainA
+```
+Filterable by `status` (open / filled / settled / cancelled), `wallet`, and `chain`.
+
+#### Futures — Order Detail
+```
+GET /api/futures/:orderId
+```
+
+#### Futures — Stats
+```
+GET /api/futures/stats
+```
+Returns open/filled/settled/cancelled counts, current oracle price, and total fees collected.
+
+#### Futures — Oracle Price (read)
+```
+GET /api/futures/oracle
+```
+
+#### Futures — Oracle Price (admin update)
+```
+POST /api/futures/oracle
+Content-Type: application/json
+
+{
+  "price": "1.25"
+}
 ```
 
 ## Testing
